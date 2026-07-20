@@ -50,7 +50,14 @@ touch its code to use it.
    ```
    cd .notebooklm-esa-generator
    uv sync --extra notebooklm --extra dev
+   uv run playwright install chromium
    ```
+   The `playwright install chromium` step downloads the actual browser
+   binary the login flow needs — `uv sync` alone only installs the Python
+   package, not the browser, so don't skip it. It's a no-op (fast) if
+   already installed. If `git` or `uv` themselves aren't available at all,
+   stop and point the user at the **notebooklm-esa-preflight** skill
+   instead — this skill assumes those two are already on the machine.
 
 3. **Check NotebookLM authentication.**
    ```

@@ -26,6 +26,21 @@ for you to read through or configure.
 That's it — no GitHub, no command line, no setup beyond dropping the PDF in
 and asking Claude Code to run it.
 
+## If it's your first time on this computer
+
+If Claude Code says it can't find `git` or `uv`, or the NotebookLM sign-in
+step doesn't work right, ask it to run a "preflight check" first (or just
+say something's not working) — it will check what's missing on this
+computer and fix it before trying the report again.
+
+## When the report is done
+
+Once the draft is finished, ask Claude Code to "summarize what's left to
+review" — it will pull together everything that still needs a person's
+attention (missing fields, things flagged for double-checking, and the
+site-visit checklist) into one list, instead of you having to go hunting
+through several files.
+
 ## What you'll get back
 
 - A finished draft Word document.

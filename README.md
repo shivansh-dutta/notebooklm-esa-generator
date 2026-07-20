@@ -135,6 +135,24 @@ present from an earlier run), handles login, and runs
 all land in `<ProjectName>\` itself — the pipeline's own code stays nested
 and out of the way.
 
+### The other two skills
+
+- **`skill/notebooklm-esa-preflight/`** — a standalone machine-readiness
+  check. Run this once per machine (or whenever intake fails on a setup
+  step) *before* ever opening a project folder — it checks/installs `git`,
+  `uv`, and the Playwright Chromium browser the login flow needs, and
+  reports NotebookLM auth status. It never touches a project folder or runs
+  the pipeline itself.
+- **`skill/notebooklm-esa-review/`** — run after intake finishes. It scans
+  the finished project's `Questions_For_User.md`, `Manual_Review/`, the
+  exported DOCX's remaining `» PE TO COMPLETE` markers, and
+  `Site_Visit_Guidance.md`, and produces one consolidated checklist of
+  exactly what the reviewing PE needs to look at. It never edits the report
+  or makes a classification judgment call — purely a review-prep summary.
+
+All three are already seeded into `project-template/.claude/skills/` — copy
+that template folder once and a project gets all three, not just intake.
+
 ## What's optional vs required
 
 Per the raw source package structure, the **EDR radius report** is the one
