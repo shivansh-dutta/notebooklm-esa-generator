@@ -1,0 +1,24 @@
+# Environment
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+.pytest_cache/
+
+# Project data (may contain client PII)
+Projects/*/Raw/
+Projects/*/Export/
+
+# OS
+.DS_Store
+Thumbs.db
