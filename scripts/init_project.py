@@ -112,8 +112,14 @@ last_name: TBD
     print(f"  Generated: 00_Project_Dashboard.md")
 
 
-def copy_templates(project_path: Path) -> None:
-    """Copy section templates from TemplateVault/ into Report_Sections/."""
+def copy_templates(project_path: Path, *, overwrite: bool = True) -> None:
+    """Copy section templates from TemplateVault/ into Report_Sections/.
+
+    overwrite=False skips any destination file that already exists — used by
+    ensure_project_scaffold() so re-running against an already-scaffolded
+    project never clobbers section content a user (or NotebookLM) has since
+    written.
+    """
     report_sections = project_path / "Report_Sections"
 
     if not TEMPLATE_VAULT.exists():
@@ -124,22 +130,28 @@ def copy_templates(project_path: Path) -> None:
         return
 
     copied = 0
+    skipped = 0
     missing = []
     for template_name in SECTION_TEMPLATES:
         src = TEMPLATE_VAULT / template_name
         dst = report_sections / template_name
-        if src.exists():
-            shutil.copy2(src, dst)
-            print(f"  Copied template: {template_name}")
-            copied += 1
-        else:
+        if not src.exists():
             missing.append(template_name)
+            continue
+        if dst.exists() and not overwrite:
+            skipped += 1
+            continue
+        shutil.copy2(src, dst)
+        print(f"  Copied template: {template_name}")
+        copied += 1
 
     if missing:
         print(
             f"WARNING: The following templates were not found in TemplateVault/ "
             f"and were NOT copied: {', '.join(missing)}"
         )
+    if skipped:
+        print(f"  Skipped {skipped} template(s) already present in Report_Sections/")
 
     print(f"  Templates copied: {copied} / {len(SECTION_TEMPLATES)}")
 
@@ -166,6 +178,35 @@ def init_project(name: str, address: str) -> None:
     print("-" * 60)
     print(f"Project '{name}' initialized successfully.")
     print(f"Location: {project_path}")
+
+
+def ensure_project_scaffold(project_path: Path, name: str, address: str) -> None:
+    """
+    Idempotent sibling to init_project() for scaffolding INTO a folder that
+    may already exist — e.g. a project folder a teammate created and dropped
+    raw source files into before this tool ever ran there — rather than
+    requiring a brand-new, not-yet-existing folder like init_project() does.
+
+    Never overwrites anything already present (existing dashboard, existing
+    section content, existing subfolders); only fills in what's missing.
+    Safe to call on every run, including repeated runs against the same
+    project folder.
+    """
+    project_path = Path(project_path)
+    is_new = not project_path.exists()
+    project_path.mkdir(parents=True, exist_ok=True)
+
+    for folder_name in SUBFOLDERS:
+        (project_path / folder_name).mkdir(exist_ok=True)
+    print(f"{'Created' if is_new else 'Using existing'} project folder: {project_path}")
+
+    dashboard_path = project_path / "00_Project_Dashboard.md"
+    if dashboard_path.exists():
+        print("  00_Project_Dashboard.md already exists — leaving it untouched")
+    else:
+        generate_dashboard(project_path, name, address)
+
+    copy_templates(project_path, overwrite=False)
 
 
 def main() -> None:

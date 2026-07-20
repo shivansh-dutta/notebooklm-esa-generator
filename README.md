@@ -85,6 +85,45 @@ Every raw NotebookLM answer (with citations, when returned) is also saved
 to `Projects/<name>/NBLM_Answers/` for audit — check these against the
 source PDF before treating the draft as usable.
 
+### Running against an arbitrary external folder (`--project-dir`)
+
+For a project folder that already exists outside this repo — e.g. one a
+teammate created and dropped the raw PDF into — use `--project-dir` instead
+of `--project`. It scaffolds in-place (idempotently — never overwrites
+anything already there) and every output lands directly in that folder:
+
+```bash
+uv run python -m notebooklm_pipeline \
+    --project-dir "C:\Sites\123 Example St" \
+    --raw "C:\Sites\123 Example St\RawPackage.pdf"
+```
+
+The notebook title / dashboard project name is taken from the folder's own
+basename. This is the mode the org-wide Skill (below) uses.
+
+## Running via the Claude Code Skill
+
+`skill/notebooklm-esa-intake/SKILL.md` packages the whole workflow above —
+clone/update this repo into a hidden nested subfolder, install dependencies,
+handle NotebookLM login, and run the pipeline — as something anyone on the
+team can trigger just by asking Claude Code, from inside a project folder
+that already has the raw PDF in it.
+
+**Install (once, per machine):** copy `skill/notebooklm-esa-intake/SKILL.md`
+to `~/.claude/skills/notebooklm-esa-intake/SKILL.md`. It has to live outside
+this repo — a project-local skill can't help clone the repo it depends on
+in the first place. Getting it onto every teammate's machine (shared drive,
+MDM push, manual copy) is up to your org's IT; nothing here automates that.
+
+**Use it:** create `<ProjectName>\` with the raw source PDF in it, spawn
+Claude Code there, and ask it to set up/run the Phase 1 ESA pipeline. The
+skill detects the raw PDF, clones `notebooklm-esa-generator` into
+`<ProjectName>\.notebooklm-esa-generator\` (or `git pull`s it if already
+present from an earlier run), handles login, and runs
+`--project-dir ".."` so the dashboard, sections, EDR hits, and final DOCX
+all land in `<ProjectName>\` itself — the pipeline's own code stays nested
+and out of the way.
+
 ## What's optional vs required
 
 Per the raw source package structure, the **EDR radius report** is the one
