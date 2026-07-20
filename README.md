@@ -109,11 +109,22 @@ handle NotebookLM login, and run the pipeline — as something anyone on the
 team can trigger just by asking Claude Code, from inside a project folder
 that already has the raw PDF in it.
 
-**Install (once, per machine):** copy `skill/notebooklm-esa-intake/SKILL.md`
-to `~/.claude/skills/notebooklm-esa-intake/SKILL.md`. It has to live outside
-this repo — a project-local skill can't help clone the repo it depends on
-in the first place. Getting it onto every teammate's machine (shared drive,
-MDM push, manual copy) is up to your org's IT; nothing here automates that.
+**Install — two options:**
+
+1. **User-level** (works in any folder, one-time per machine): copy
+   `skill/notebooklm-esa-intake/SKILL.md` to
+   `~/.claude/skills/notebooklm-esa-intake/SKILL.md`.
+2. **Project-level** (travels with the project folder, no per-machine setup —
+   recommended if teammates won't be pulling from this repo directly): use
+   `project-template/` in this repo. It's a ready-to-copy folder that already
+   has `.claude/skills/notebooklm-esa-intake/SKILL.md` seeded in the right
+   place. Hand teammates that folder (e.g. via a shared drive) — they copy
+   it to start each new site, drop the raw PDF in, and open Claude Code
+   there. No GitHub, no CLI, nothing to install by hand. See
+   `project-template/README.md` for the exact human-facing instructions.
+
+Either way, getting the file onto a real shared location (shared drive, MDM
+push, manual copy) is up to your org; nothing here automates that part.
 
 **Use it:** create `<ProjectName>\` with the raw source PDF in it, spawn
 Claude Code there, and ask it to set up/run the Phase 1 ESA pipeline. The
