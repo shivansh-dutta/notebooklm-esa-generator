@@ -17,11 +17,13 @@ Public interface:
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from pathlib import Path
 
 from agents.writer import DRAFT_MARKER, SECTIONS
+from notebooklm_pipeline.section_cleanup import clean_section_markdown
 from scripts.report_constants import pe_marker
 
 logger = logging.getLogger(__name__)
@@ -38,15 +40,28 @@ EDR_HIT_TEMPLATE_PATH = REPO_ROOT / "TemplateVault" / "EDR_Hit_Template.md"
 # be tuned independently of the main pipeline's.
 AUTO_DRAFT_RADIUS_FT = 1320  # 0.25 miles
 
-# Fields dashboard_questions() (question_bank.py) does not ask about, since
-# they either aren't findable from source documents (report_status is a
-# workflow state, not a fact) or aren't consumed by export_docx's
-# placeholder map (ep_firm/assessment_dates only feed the separate PDF
-# cover path in scripts/export.py, not the DOCX template).
+# Fields dashboard_questions() (question_bank.py) does not ask about.
+# report_status/assessment_dates aren't findable from source documents or
+# consumed by export_docx's placeholder map. assessor_name/reviewer_name/
+# title/last_name/ep_firm are deliberately NOT NotebookLM-derived either —
+# they describe who is performing THIS assessment, which the uploaded
+# source PDFs (records about the property, not about who's assessing it)
+# cannot truthfully answer. Asking NotebookLM for these was exactly the
+# mechanism that let a prior consultant's identity (named in a Qualifications
+# or FOIL appendix) leak into "who prepared this report" during the 631
+# Northland review — see question_bank._NEVER_CARRY_OVER_IDENTITY. These
+# default to a PE marker so a fresh run doesn't silently fabricate an
+# identity; a real engagement should overwrite them in the dashboard file
+# once known (e.g. via ensure_project_scaffold not clobbering an existing
+# dashboard, so setting them once persists across re-runs).
 _DASHBOARD_NON_QUESTION_DEFAULTS = {
     "ep_firm": "TBD",
     "assessment_dates": "TBD",
     "report_status": "PE Review Pending",
+    "assessor_name": pe_marker("environmental professional name"),
+    "reviewer_name": pe_marker("reviewing professional name"),
+    "title": pe_marker("EP professional title"),
+    "last_name": pe_marker("EP last name"),
 }
 
 _SLUG_MAX = 60
@@ -95,6 +110,21 @@ def classify_distance(distance_ft) -> str:
 # Dashboard
 # ---------------------------------------------------------------------------
 
+def merge_dashboard_fields(dashboard_values: dict[str, str], project_name: str) -> dict[str, str]:
+    """
+    Merge qa_runner's NotebookLM-answered dashboard fields with the
+    non-question defaults (report_status, ep_firm, and the identity fields
+    that are never NotebookLM-derived — see _DASHBOARD_NON_QUESTION_DEFAULTS).
+    Shared by write_dashboard() and build_qualifications_markdown() so both
+    see the same resolved values.
+    """
+    fields = {**dashboard_values, **{
+        k: v for k, v in _DASHBOARD_NON_QUESTION_DEFAULTS.items() if k not in dashboard_values
+    }}
+    fields.setdefault("project_name", project_name)
+    return fields
+
+
 def write_dashboard(project_path: Path, project_name: str, dashboard_values: dict[str, str]) -> Path:
     """
     Write 00_Project_Dashboard.md with the same frontmatter schema
@@ -108,10 +138,7 @@ def write_dashboard(project_path: Path, project_name: str, dashboard_values: dic
     COMPLETE" result as if the field were left entirely unresolved.
     """
     project_path = Path(project_path)
-    fields = {**dashboard_values, **{
-        k: v for k, v in _DASHBOARD_NON_QUESTION_DEFAULTS.items() if k not in dashboard_values
-    }}
-    fields.setdefault("project_name", project_name)
+    fields = merge_dashboard_fields(dashboard_values, project_name)
 
     lines = ["---"]
     # Keep a stable, readable field order matching init_project's schema.
@@ -140,6 +167,51 @@ def write_dashboard(project_path: Path, project_name: str, dashboard_values: dic
 
 
 # ---------------------------------------------------------------------------
+# Section 11.0 — Qualifications (built deterministically, never NotebookLM-asked)
+# ---------------------------------------------------------------------------
+
+def build_qualifications_markdown(dashboard_values: dict[str, str], project_name: str) -> str:
+    """
+    Build Section 11.0 (Qualifications and Declaration of Environmental
+    Professionals) from the project dashboard's own EP/firm/reviewer fields
+    — question_bank.py deliberately never asks NotebookLM this section (see
+    question_bank._NOTEBOOKLM_EXCLUDED_SECTIONS / _NEVER_CARRY_OVER_IDENTITY):
+    the 631 Northland review found NotebookLM answering "who prepared this
+    report" by lifting the PRIOR consultant's own Qualifications appendix
+    verbatim (a different firm's name, a different EP's bio), since that
+    appendix is just another uploaded source to it. Detailed personnel
+    credentials/resumes are left as a PE marker rather than guessed — this
+    function only ever states what's known from the dashboard.
+    """
+    fields = merge_dashboard_fields(dashboard_values, project_name)
+    firm = fields.get("ep_firm") or pe_marker("preparing firm name")
+    assessor = fields.get("assessor_name") or pe_marker("environmental professional name")
+    title = fields.get("title") or pe_marker("EP professional title")
+    reviewer = fields.get("reviewer_name") or pe_marker("reviewing professional name")
+
+    lines = [
+        "# 11.0 Qualifications and Declaration of Environmental Professionals",
+        "",
+        f"This Phase I Environmental Site Assessment (ESA) was conducted and prepared by "
+        f"qualified environmental professionals of {firm}.",
+        "",
+        f"The undersigned Environmental Professional(s) — {assessor}, {title} — declare "
+        "that this assessment was conducted in conformance with the scope and "
+        "limitations of ASTM E1527-21, and that the undersigned meet the definition of "
+        "Environmental Professional as set forth in 40 CFR §312.10(b).",
+        "",
+        f"Reviewed by: {reviewer}.",
+        "",
+        pe_marker(
+            "individual EP credentials/resumes (education, professional licensure, "
+            "years of relevant experience)"
+        ),
+        "",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+# ---------------------------------------------------------------------------
 # Report sections
 # ---------------------------------------------------------------------------
 
@@ -156,6 +228,11 @@ def write_sections(project_path: Path, sections: dict[str, str]) -> list[Path]:
     untouched rather than being blanked, and is logged — mirrors
     agents.writer.run_writer's "template not found — skipping" behavior for
     the analogous case.
+
+    Every answer is passed through section_cleanup.clean_section_markdown()
+    first — strips leaked frontmatter/DRAFT-banner/template-fence scaffolding
+    that NotebookLM occasionally echoes verbatim (see that module's
+    docstring), so it never reaches the exported DOCX unfiltered.
     """
     project_path = Path(project_path)
     sections_dir = project_path / "Report_Sections"
@@ -168,7 +245,7 @@ def write_sections(project_path: Path, sections: dict[str, str]) -> list[Path]:
         if answer is None:
             logger.warning("assemble: no NotebookLM answer for %s — leaving template as-is", filename)
             continue
-        path.write_text(DRAFT_MARKER + answer, encoding="utf-8")
+        path.write_text(DRAFT_MARKER + clean_section_markdown(answer), encoding="utf-8")
         written.append(path)
 
     return written
@@ -326,6 +403,28 @@ def write_edr_hits(project_path: Path, edr_hits: dict[str, list[dict]]) -> list[
 
 
 # ---------------------------------------------------------------------------
+# Historical tables (aerial / Sanborn / city directory) — feeds
+# scripts/export_docx.populate_historical_tables()
+# ---------------------------------------------------------------------------
+
+def write_historical_tables(project_path: Path, historical_tables: dict[str, list[dict]]) -> Path:
+    """
+    Write qa_runner's {table_key: [row, ...]} to
+    <project>/Historical_Records/historical_tables.json — a single JSON
+    file, not per-row markdown, since (unlike EDR hits) there's no
+    within-radius/beyond-radius routing decision for these rows and the
+    consumer (export_docx.populate_historical_tables) only needs the raw
+    rows, not an audit-friendly per-record file.
+    """
+    project_path = Path(project_path)
+    out_dir = project_path / "Historical_Records"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / "historical_tables.json"
+    out_path.write_text(json.dumps(historical_tables, indent=2), encoding="utf-8")
+    return out_path
+
+
+# ---------------------------------------------------------------------------
 # Top-level entry point
 # ---------------------------------------------------------------------------
 
@@ -333,6 +432,15 @@ def assemble(project_path: Path, project_name: str, results) -> None:
     """Write all three export-ready artifacts from a qa_runner.QaResults."""
     project_path = Path(project_path)
     write_dashboard(project_path, project_name, results.dashboard)
-    write_sections(project_path, results.sections)
+
+    # 11.0 Qualifications is never in results.sections (question_bank.py
+    # excludes it from NotebookLM extraction entirely) — build it here from
+    # dashboard fields instead. See build_qualifications_markdown()'s
+    # docstring for why.
+    sections = dict(results.sections)
+    sections["11_Qualifications.md"] = build_qualifications_markdown(results.dashboard, project_name)
+
+    write_sections(project_path, sections)
     write_edr_hits(project_path, results.edr_hits)
-    logger.info("assemble: wrote dashboard, %d section file(s), EDR hit notes", len(results.sections))
+    write_historical_tables(project_path, results.historical_tables)
+    logger.info("assemble: wrote dashboard, %d section file(s), EDR hit notes", len(sections))

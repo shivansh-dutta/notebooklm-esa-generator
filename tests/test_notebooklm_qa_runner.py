@@ -118,6 +118,69 @@ async def test_run_qa_full_wiring(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_resolved_citations_appended_when_structured_data_present(tmp_path: Path):
+    """When NotebookLM's response DOES carry structured citation metadata
+    (not the "(none returned)" case observed in the real 631 run), qa_runner
+    should append a resolved Citations list rather than leaving bare [N]
+    markers for clean_section_markdown to strip later."""
+    project = tmp_path / "TestProject3"
+    project.mkdir()
+
+    async def fake_ask_with_citations(client, notebook_id, question: str) -> AskResult:
+        if "Draft Section" in question:
+            return AskResult(
+                answer="## Some Heading\n\nGrounded prose citing a source [1]. " * 5,
+                citations=["EDR Radius Map Report"],
+                structured_citations=[{"source": "EDR Radius Map Report", "page": "42"}],
+            )
+        if "ONLY the value itself" in question or "the complete street address" in question:
+            return AskResult(answer=pe_marker())
+        if "JSON array" in question:
+            return AskResult(answer="[]")
+        return AskResult(answer="No such data was provided in the uploaded sources.")
+
+    with patch("notebooklm_pipeline.qa_runner.ask", fake_ask_with_citations), \
+         patch("notebooklm_pipeline.orchestrator.build_followup_question", return_value=None):
+        results = await qa_runner.run_qa(client=object(), notebook_id="nb-3", project_path=project)
+
+    intro = results.sections["01_Introduction.md"]
+    assert "**Citations:**" in intro
+    assert "EDR Radius Map Report, p. 42" in intro
+
+
+@pytest.mark.asyncio
+async def test_historical_tables_populated_from_structured_answers(tmp_path: Path):
+    project = tmp_path / "TestProject4"
+    project.mkdir()
+
+    async def fake_ask(client, notebook_id, question: str) -> AskResult:
+        if "aerial photographs for or near" in question:
+            return AskResult(answer='[{"year": "1950", "subject_property": "Vacant", "adjacent_properties": "Industrial"}]')
+        if "Sanborn fire insurance maps for or near" in question:
+            return AskResult(answer="[]")
+        if "city or street directories for or near" in question:
+            return AskResult(answer="not valid json")
+        if "ONLY the value itself" in question or "the complete street address" in question:
+            return AskResult(answer=pe_marker())
+        if "JSON array" in question:
+            return AskResult(answer="[]")
+        return AskResult(answer="No such data was provided in the uploaded sources.")
+
+    with patch("notebooklm_pipeline.qa_runner.ask", fake_ask), \
+         patch("notebooklm_pipeline.orchestrator.build_followup_question", return_value=None):
+        results = await qa_runner.run_qa(client=object(), notebook_id="nb-4", project_path=project)
+
+    assert results.historical_tables["aerial"] == [
+        {"year": "1950", "subject_property": "Vacant", "adjacent_properties": "Industrial"}
+    ]
+    assert results.historical_tables["sanborn"] == []
+    # Unparseable JSON degrades to an empty list, never a crash, and is
+    # recorded as unresolved for PE visibility.
+    assert results.historical_tables["city_directory"] == []
+    assert any("city_directory" in item for item in results.unresolved)
+
+
+@pytest.mark.asyncio
 async def test_edr_covers_every_database(tmp_path: Path):
     project = tmp_path / "TestProject2"
     project.mkdir()

@@ -11,6 +11,7 @@ from notebooklm_pipeline.question_bank import (
     DASHBOARD_FIELDS,
     dashboard_questions,
     edr_enumeration_questions,
+    historical_table_questions,
     legal_vault_source_paths,
     section_questions,
 )
@@ -25,10 +26,18 @@ class TestDashboardQuestions:
     def test_covers_every_export_docx_placeholder_field(self):
         # Every dashboard field export_docx.PLACEHOLDER_FIELD_MAP needs must
         # be askable, or the DOCX cover/signature will always show PE_MARKER
-        # even when NotebookLM could have found the value.
+        # even when NotebookLM could have found the value — EXCEPT the
+        # identity fields (assessor/reviewer/title/last_name), which are
+        # deliberately never asked of NotebookLM (see question_bank.py's
+        # comment above DASHBOARD_FIELDS / _NEVER_CARRY_OVER_IDENTITY): the
+        # 631 Northland review found NotebookLM answering "who conducted
+        # this assessment" from a prior consultant's own appendix. Those
+        # fields come from assemble.py's non-question defaults instead.
+        _identity_fields_never_asked = {"assessor_name", "reviewer_name", "title", "last_name"}
         asked_fields = {dq.field for dq in dashboard_questions()}
-        needed_fields = set(PLACEHOLDER_FIELD_MAP.values())
+        needed_fields = set(PLACEHOLDER_FIELD_MAP.values()) - _identity_fields_never_asked
         assert needed_fields <= asked_fields
+        assert asked_fields.isdisjoint(_identity_fields_never_asked)
 
 
 class TestSectionQuestions:
@@ -75,6 +84,23 @@ class TestSectionQuestions:
             if sq.section_num != "5.0":
                 assert sq.extra_questions == []
 
+    def test_qualifications_section_is_excluded(self):
+        # 11.0 is never asked of NotebookLM — see
+        # question_bank._NOTEBOOKLM_EXCLUDED_SECTIONS /
+        # _NEVER_CARRY_OVER_IDENTITY. assemble.build_qualifications_markdown
+        # builds it from dashboard fields instead.
+        questions = section_questions()
+        assert all(sq.section_num != "11.0" for sq in questions)
+        assert "11_Qualifications.md" not in {sq.filename for sq in questions}
+
+    def test_every_question_includes_identity_firewall(self):
+        questions = section_questions()
+        assert questions  # sanity: not accidentally empty
+        for sq in questions:
+            assert "never state or imply who prepared" in sq.question.lower()
+            for extra in sq.extra_questions:
+                assert "never state or imply who prepared" in extra.lower()
+
 
 class TestEdrEnumerationQuestions:
     def test_one_question_per_database_to_list_key(self):
@@ -85,6 +111,27 @@ class TestEdrEnumerationQuestions:
         questions = edr_enumeration_questions()
         for eq in questions:
             assert "JSON array" in eq.question
+
+
+class TestHistoricalTableQuestions:
+    def test_one_question_per_table(self):
+        questions = historical_table_questions()
+        assert {hq.table_key for hq in questions} == {"aerial", "sanborn", "city_directory"}
+
+    def test_questions_request_json_only(self):
+        for hq in historical_table_questions():
+            assert "JSON array" in hq.question
+
+    def test_aerial_and_sanborn_use_subject_adjacent_schema(self):
+        questions = {hq.table_key: hq.question for hq in historical_table_questions()}
+        assert "subject_property" in questions["aerial"]
+        assert "adjacent_properties" in questions["aerial"]
+        assert "subject_property" in questions["sanborn"]
+
+    def test_city_directory_uses_address_occupant_schema(self):
+        questions = {hq.table_key: hq.question for hq in historical_table_questions()}
+        assert "address" in questions["city_directory"]
+        assert "occupant" in questions["city_directory"]
 
 
 class TestLegalVaultSourcePaths:

@@ -30,6 +30,56 @@ def pe_marker(description: str = "") -> str:
     return f"{PE_MARKER}: {description}" if description else PE_MARKER
 
 
+# Distinct from PE_MARKER: a gap caused by a *source document never being in
+# the uploaded package* (e.g. no title policy, no prior consultant reports),
+# vs. PE_MARKER's "the sources were reviewed but are silent on this point."
+# The 631 Northland review conflated these — a PE reading "» PE TO COMPLETE"
+# can't tell whether NotebookLM looked and found nothing, or was never given
+# the document at all. Keeping them visibly distinct lets the PE triage:
+# MISSING_INPUT means "go get this document," PE_MARKER means "this needs
+# judgment or field work."
+MISSING_INPUT_MARKER = "» MISSING INPUT"
+
+
+def missing_input_marker(component: str = "") -> str:
+    """Build a missing-input marker, optionally naming the absent source
+    document (e.g. missing_input_marker("title policy"))."""
+    return f"{MISSING_INPUT_MARKER}: {component}" if component else MISSING_INPUT_MARKER
+
+
+# ---------------------------------------------------------------------------
+# Source manifest — canonical input components (notebooklm_pipeline/source_manifest.py)
+# ---------------------------------------------------------------------------
+
+# Canonical component names segment_pdf.py can actually detect (its
+# _COMPONENT_PATTERNS), each with a human label and whether the pipeline
+# treats it as hard-required. edr_radius_report is the one component the
+# pipeline meaningfully depends on for output (per README's "What's optional
+# vs required") — everything else may legitimately be absent from a real
+# package.
+KNOWN_COMPONENTS: dict[str, dict[str, object]] = {
+    "edr_radius_report": {"label": "EDR radius report", "required": True},
+    "site_photographs": {"label": "Site photographs", "required": False},
+    "environmental_questionnaire": {"label": "Environmental questionnaire", "required": False},
+    "historic_research": {"label": "Historic research (aerials/Sanborn/topo)", "required": False},
+    "foil": {"label": "FOIL requests & responses", "required": False},
+    "qualifications": {"label": "Qualifications of professionals (PRIOR consultant's — never used for this report's authorship)", "required": False},
+    "maps": {"label": "Site/location maps", "required": False},
+}
+
+# Inputs a real Phase 1 engagement often needs that segment_pdf.py has no
+# divider pattern for at all (they don't arrive as their own "APPENDIX N"
+# in this raw-package format) — so their absence can never be *detected*
+# from the appendix map the way KNOWN_COMPONENTS can. Listed here purely so
+# Source_Manifest.md can flag them as "not part of the standard appendix
+# structure — confirm separately" rather than silently omitting them.
+UNDETECTABLE_INPUTS: dict[str, str] = {
+    "title_records": "Title insurance policy / environmental lien search",
+    "prior_reports": "Copies of prior Phase I/Phase II reports referenced by the questionnaire",
+    "city_directory_package": "EDR City Directory Package (distinct from general historic research)",
+}
+
+
 # ---------------------------------------------------------------------------
 # Placeholder -> project-metadata field map
 # ---------------------------------------------------------------------------

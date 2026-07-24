@@ -50,6 +50,31 @@ _NEVER_GUESS = (
     "dates, names, distances, or regulatory statuses."
 )
 
+# Identity/authorship firewall — added after the 631 Northland review found
+# NotebookLM answering "who prepared this report" / "who submitted this FOIL
+# request" style questions by lifting a PRIOR consultant's own appendix
+# (their Qualifications-of-Professionals appendix, their FOIL cover letter)
+# verbatim, since to NotebookLM that's just another uploaded source with
+# equal authority to everything else. THIS report's preparer/reviewer/firm
+# identity is supplied by the project dashboard (see assemble.py), never by
+# source-document extraction — a prior consultant's name in the raw package
+# is background material about the property's history, not a fact about who
+# is doing THIS assessment.
+_NEVER_CARRY_OVER_IDENTITY = (
+    "IMPORTANT — never state or imply who prepared, authored, reviewed, or "
+    "signed THIS report; the name of the consulting firm performing THIS "
+    "assessment; personnel names, biographies, or professional "
+    "qualifications; or who submitted any FOIL/records request on THIS "
+    "engagement's behalf — even if a source document names a consultant, "
+    "firm, or person in connection with the property (e.g. a prior "
+    "assessment's authors, or a previous FOIL requester). Those identities "
+    "belong to a different, earlier engagement, not this one. If the "
+    "template asks for such a name, leave it as a PE marker instead of "
+    "reusing a name found in the sources. You may still report the "
+    "substance of what a prior report or FOIL request found/requested — "
+    "just not who performed it."
+)
+
 
 # ---------------------------------------------------------------------------
 # 1. Dashboard / cover fields
@@ -61,6 +86,14 @@ class DashboardQuestion:
     question: str
 
 
+# NOTE: assessor_name / reviewer_name / title / last_name are deliberately
+# NOT asked here (moved to assemble.py's _DASHBOARD_NON_QUESTION_DEFAULTS,
+# same treatment as ep_firm). These describe who is performing THIS
+# assessment — a fact the uploaded source PDFs cannot truthfully answer,
+# since those PDFs are the property records being assessed, not a record of
+# who's assessing them. Asking NotebookLM was the exact mechanism that let a
+# prior consultant's identity (found in a Qualifications or FOIL appendix)
+# leak into "who prepared this report" — see _NEVER_CARRY_OVER_IDENTITY.
 DASHBOARD_FIELDS: list[tuple[str, str]] = [
     ("site_address", "the complete street address of the subject property"),
     ("city", "the city the subject property is located in"),
@@ -71,10 +104,6 @@ DASHBOARD_FIELDS: list[tuple[str, str]] = [
     ("client_address", "the client's mailing address"),
     ("project_no", "the project or job number assigned to this assessment"),
     ("report_draft_date", "the report date (or site visit / assessment date if no report date is stated)"),
-    ("assessor_name", "the full name of the environmental professional who conducted the assessment"),
-    ("reviewer_name", "the full name of the person who reviewed or signed off on the assessment, if stated"),
-    ("title", "the professional title of the environmental professional who conducted the assessment"),
-    ("last_name", "the last name only of the environmental professional who conducted the assessment"),
 ]
 
 
@@ -140,6 +169,7 @@ not renumber, rename, reorder, or omit any heading. Output ONLY the
 completed section markdown — no preamble, no explanation, no code fence.
 
 {_NEVER_GUESS}
+{_NEVER_CARRY_OVER_IDENTITY}
 {extra}
 --- BEGIN TEMPLATE ---
 {template_content}
@@ -156,6 +186,16 @@ completed section markdown — no preamble, no explanation, no code fence.
 # are concatenated back into one Report_Sections/05_Records_Review.md by
 # qa_runner, and export_docx's heading-based parser doesn't care how many
 # NotebookLM calls produced the headings it finds.
+# Section 11.0 (Qualifications and Declaration of Environmental
+# Professionals) is never asked of NotebookLM at all — see
+# _NEVER_CARRY_OVER_IDENTITY above for why asking it is exactly what caused
+# the 631 Northland review's authorship bug (NotebookLM answered "who
+# prepared this report" from the prior consultant's own Qualifications
+# appendix). assemble.py builds this section deterministically from the
+# project dashboard's own EP/firm fields instead — see
+# assemble.build_qualifications_markdown().
+_NOTEBOOKLM_EXCLUDED_SECTIONS = {"11.0"}
+
 _RECORDS_REVIEW_SPLIT_HEADING = "### State, tribal, and local records"
 
 
@@ -178,6 +218,8 @@ def section_questions() -> list[SectionQuestion]:
     """
     out = []
     for section_num, section_name, filename in SECTIONS:
+        if section_num in _NOTEBOOKLM_EXCLUDED_SECTIONS:
+            continue
         template_content = _load_template(filename)
         if not template_content:
             continue
@@ -301,6 +343,61 @@ Organize chronologically. If no such maps are present in the uploaded
 sources, respond with exactly: "No historical maps or aerial photographs
 were provided in the uploaded sources."
 """
+
+
+# ---------------------------------------------------------------------------
+# 3c. Historical tables — aerial photos / Sanborn maps / city directories
+# ---------------------------------------------------------------------------
+
+# The 631 Northland review found these three template tables (§5.2.1, §5.2.2,
+# §5.2.3) left with unresolved `{{year}}/{{observation}}` placeholder cells
+# directly beneath fully-drafted narrative prose, because nothing ever asked
+# NotebookLM for this data in a structured, per-row shape — the section
+# question only asks for prose (question_bank._build_question), and
+# scripts/docx_helpers.markdown_lite_to_blocks deliberately doesn't parse
+# markdown tables. These three questions mirror edr_enumeration_questions()'s
+# approach (strict JSON, one row per finding) so
+# scripts/export_docx.populate_historical_tables() has real data to fill the
+# tables with — see that function's docstring for how it locates each table
+# (they share an identical header+first-row shape for 5.2.1/5.2.2, so it
+# locates by heading proximity, not header signature).
+
+
+@dataclass
+class HistoricalTableQuestion:
+    table_key: str   # "aerial", "sanborn", or "city_directory"
+    question: str
+
+
+_AERIAL_SANBORN_JSON_EXAMPLE = json.dumps(
+    [{"year": "1986", "subject_property": "Vacant lot", "adjacent_properties": "Industrial buildings to the east"}],
+    indent=2,
+)
+_CITY_DIRECTORY_JSON_EXAMPLE = json.dumps(
+    [{"year": "1965", "address": "631 Northland Ave", "occupant": "Example Manufacturing Co."}],
+    indent=2,
+)
+
+
+def historical_table_questions() -> list[HistoricalTableQuestion]:
+    out = []
+    for key, source_label, columns, example in (
+        ("aerial", "aerial photographs", ("year", "subject_property", "adjacent_properties"), _AERIAL_SANBORN_JSON_EXAMPLE),
+        ("sanborn", "Sanborn fire insurance maps", ("year", "subject_property", "adjacent_properties"), _AERIAL_SANBORN_JSON_EXAMPLE),
+        ("city_directory", "city or street directories", ("year", "address", "occupant"), _CITY_DIRECTORY_JSON_EXAMPLE),
+    ):
+        cols = ", ".join(columns)
+        question = f"""If the uploaded sources include {source_label} for or near the subject
+property, extract one row per year/edition reviewed with exactly these
+keys: {cols}. Respond with ONLY a JSON array, no other text, no markdown
+code fence. {_NEVER_GUESS} If no {source_label} are present in the uploaded
+sources, respond with exactly: []
+
+Example shape (values are illustrative only, not real data):
+{example}
+"""
+        out.append(HistoricalTableQuestion(table_key=key, question=question))
+    return out
 
 
 # ---------------------------------------------------------------------------

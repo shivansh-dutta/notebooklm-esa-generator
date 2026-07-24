@@ -37,10 +37,18 @@ Orchestrates, in order:
        run can be re-attempted without clobbering earlier output)
     2. nblm_client.open_client() + create_notebook()
     3. ingest.run_ingest()          — segment the raw PDF + LegalVault, upload
+       + source_manifest.write_source_manifest() — record which components
+         were actually uploaded (present/absent), for "» MISSING INPUT" vs
+         "» PE TO COMPLETE" triage in the finished report
     4. qa_runner.run_qa()           — run the question bank
     5. assemble.assemble()          — write dashboard / sections / EDR hits
     6. site_visit_guidance.write_site_visit_guidance()
-    7. scripts.export_docx.run_export_docx() — final Envicon-template DOCX
+    7. review_pass.run_review_pass() — one whole-report sonnet pass: deletes
+       residual scaffolding/identity carry-over, flags cross-section
+       contradictions to Questions_For_User.md (never rewrites prose)
+    8. consistency.run_consistency_checks() — free, deterministic (no LLM)
+       cross-section contradiction checks, same Questions_For_User.md
+    9. scripts.export_docx.run_export_docx() — final Envicon-template DOCX
 """
 
 from __future__ import annotations
@@ -51,7 +59,7 @@ import logging
 import sys
 from pathlib import Path
 
-from notebooklm_pipeline import assemble, ingest, qa_runner, site_visit_guidance
+from notebooklm_pipeline import assemble, consistency, ingest, qa_runner, review_pass, site_visit_guidance, source_manifest
 from notebooklm_pipeline.nblm_client import NblmError, create_notebook, open_client
 from scripts import init_project
 from scripts.export_docx import run_export_docx
@@ -97,6 +105,7 @@ async def _run_async(args: argparse.Namespace) -> Path:
             logger.info("run: ingesting %s", raw_pdf_path.name)
             sources = await ingest.run_ingest(client, notebook_id, project_path, raw_pdf_path)
             logger.info("run: uploaded %d source(s)", len(sources))
+            source_manifest.write_source_manifest(project_path, sources)
 
         logger.info("run: running question bank against the notebook")
         results = await qa_runner.run_qa(client, notebook_id, project_path)
@@ -104,6 +113,10 @@ async def _run_async(args: argparse.Namespace) -> Path:
     logger.info("run: assembling export artifacts")
     assemble.assemble(project_path, display_name, results)
     site_visit_guidance.write_site_visit_guidance(project_path, results)
+
+    logger.info("run: running whole-report consistency review pass")
+    review_pass.run_review_pass(project_path, results.dashboard)
+    consistency.run_consistency_checks(project_path, results.dashboard)
 
     logger.info("run: exporting DOCX")
     output_path = run_export_docx(project_path)

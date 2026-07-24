@@ -46,10 +46,65 @@ class AskResult:
     """Normalized result of a chat.ask() call — the raw library response
     shape isn't fully documented (esp. for citations), so every call site
     here defensively extracts what it can rather than assuming attributes
-    exist."""
+    exist.
+
+    citations: flattened display strings (back-compat — this is what
+    _save_answer's audit file has always shown).
+    structured_citations: best-effort {source, page, url, snippet} dicts for
+    whatever fields the library's citation objects actually expose. Empty
+    whenever the library returns no citation objects at all (observed live,
+    every section, against the 631 Northland notebook — every raw answer's
+    "## Citations" block reads "(none returned)"). See
+    notebooklm_pipeline/section_cleanup.py::resolved_citations_block() for
+    how this is used to resolve inline [N] markers, and why the fallback
+    (stripping them) is what actually runs in practice today.
+    """
     answer: str
     citations: list[str] = field(default_factory=list)
+    structured_citations: list[dict] = field(default_factory=list)
     raw: Any = None
+
+
+# Attribute names to defensively probe on an unknown citation object, in
+# priority order — notebooklm-py's citation object shape isn't documented,
+# so this covers the field names grounded-QA APIs commonly use.
+_CITATION_SOURCE_ATTRS = ("title", "source", "source_title", "name", "document_title")
+_CITATION_PAGE_ATTRS = ("page", "page_number", "loc", "location", "chunk")
+_CITATION_URL_ATTRS = ("url", "uri", "link")
+_CITATION_SNIPPET_ATTRS = ("snippet", "excerpt", "quote", "text")
+
+
+def _first_attr(obj: Any, names: tuple[str, ...]) -> str | None:
+    for name in names:
+        value = getattr(obj, name, None)
+        if value not in (None, ""):
+            return str(value)
+    return None
+
+
+def _extract_structured_citation(c: Any) -> dict:
+    """Best-effort extraction of {source, page, url, snippet} from one
+    citation entry, whatever shape it turns out to be. Fields that can't be
+    found are simply omitted (never guessed)."""
+    if isinstance(c, dict):
+        return {
+            k: str(v) for k, v in {
+                "source": c.get("title") or c.get("source") or c.get("name"),
+                "page": c.get("page") or c.get("page_number") or c.get("loc"),
+                "url": c.get("url") or c.get("uri"),
+                "snippet": c.get("snippet") or c.get("excerpt") or c.get("quote"),
+            }.items() if v not in (None, "")
+        }
+    if isinstance(c, str):
+        return {}
+    return {
+        k: v for k, v in {
+            "source": _first_attr(c, _CITATION_SOURCE_ATTRS),
+            "page": _first_attr(c, _CITATION_PAGE_ATTRS),
+            "url": _first_attr(c, _CITATION_URL_ATTRS),
+            "snippet": _first_attr(c, _CITATION_SNIPPET_ATTRS),
+        }.items() if v is not None
+    }
 
 
 def _import_notebooklm():
@@ -156,6 +211,7 @@ async def ask(
 
     citations_raw = getattr(result, "citations", None) or getattr(result, "sources", None) or []
     citations: list[str] = []
+    structured_citations: list[dict] = []
     for c in citations_raw:
         if isinstance(c, str):
             citations.append(c)
@@ -163,5 +219,10 @@ async def ask(
             citations.append(
                 getattr(c, "title", None) or getattr(c, "source", None) or str(c)
             )
+        structured = _extract_structured_citation(c)
+        if structured:
+            structured_citations.append(structured)
 
-    return AskResult(answer=answer, citations=citations, raw=result)
+    return AskResult(
+        answer=answer, citations=citations, structured_citations=structured_citations, raw=result
+    )

@@ -27,9 +27,7 @@ status: template
 
 ### 5.2.3 City and Street Directories
 
-<!-- FILL IN MANUALLY: The Year | Address | Occupant table for this subsection is a fixed table in the report template — complete it directly there if directory research was performed. -->
-
-<!-- DRAFT: Summarize city/street directory research findings, cross-referencing the table in this section of the template. -->
+<!-- DRAFT: Summarize city/street directory research findings, cross-referencing the Year | Address | Occupant table in this section of the template (that table is populated separately from a structured query — focus this narrative on prose findings, not the table itself). If no City Directory Package was part of the uploaded sources (distinct from general historic research), write exactly "» MISSING INPUT: EDR City Directory Package" instead of treating it as a data gap requiring judgment. -->
 
 ### 5.2.4 USGS Topographic Maps
 
@@ -61,7 +59,7 @@ status: template
 
 <!-- FILL IN MANUALLY: Agency records reviewed (NYSDEC, county, municipal), with dates. -->
 
-<!-- DRAFT: Summarize any regulatory agency file review performed (e.g., NYSDEC spill file review) using the FOIL Requests & Responses content provided below, if any. If no agency file review was performed or no response was received, state that clearly and note it as a data gap. -->
+<!-- DRAFT: Summarize any regulatory agency file review performed (e.g., NYSDEC spill file review) using the FOIL Requests & Responses content provided below, if any — describe the request's substance, date, reference number, and any response received. Do NOT name who submitted the FOIL request (person or firm); if a submitter name is needed, write "the assessment team" instead. If no agency file review was performed or no response was received, state that clearly and note it as a data gap. -->
 
 ## 5.5 Additional Record Sources
 

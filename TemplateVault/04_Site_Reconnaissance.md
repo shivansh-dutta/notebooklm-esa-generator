@@ -19,7 +19,7 @@ status: template
 
 ## 4.2 General Description
 
-<!-- DRAFT: Summarize what the EP observed at the property using the site-photograph observations provided below, if any. Describe the type and general condition of structures, equipment, and materials observed, and note consistency with the current use described in Section 2. -->
+<!-- DRAFT: Summarize what the EP observed at the property using the site-photograph observations provided below, if any. Describe the type and general condition of structures, equipment, and materials observed, and note consistency with the current use described in Section 2. Explicitly check for and report any of the following classic REC-indicator features visible in the photographs, if present: drums or containers, oil/chemical staining (including on flooring), aboveground or underground storage tanks (ASTs/USTs), floor drains or sumps, well casings or monitoring wells, welded-cover or unusual manholes, and PCB-containing equipment (transformers, capacitors). Do not limit the summary to only what the interior/exterior checklist table below happens to already capture — report every such feature you can actually see in the photographs, even if the checklist table itself is filled in separately by the EP. -->
 
 ## 4.3 Interior Observations
 

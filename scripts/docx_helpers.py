@@ -121,6 +121,100 @@ def insert_paragraph_after(
     return new_para
 
 
+def remove_paragraph(paragraph: Paragraph) -> None:
+    """Delete *paragraph* from the document entirely (removes its <w:p>
+    element from its parent). Used to strip literal template scaffolding
+    paragraphs (e.g. "» Writer note (delete before issue): ...") that should
+    never reach an issued report."""
+    p = paragraph._p
+    p.getparent().remove(p)
+
+
+def remove_paragraphs_matching(doc: DocumentObject, predicate) -> int:
+    """Remove every body paragraph (not table cells/headers — the template's
+    literal scaffolding paragraphs this is meant for only ever appear in the
+    body) whose text satisfies *predicate*. Returns the count removed."""
+    to_remove = [p for p in doc.paragraphs if predicate(p.text)]
+    for p in to_remove:
+        remove_paragraph(p)
+    return len(to_remove)
+
+
+# ---------------------------------------------------------------------------
+# Body-order table lookup — for tables that share an identical header AND
+# first-row signature (e.g. the template's Aerial and Sanborn tables both
+# use "Year | Subject Property | Adjacent properties" with the same
+# {{year}}/{{observation}} placeholder first row), find_table_by_header* has
+# nothing left to disambiguate on. Locating by heading-proximity instead —
+# these two tables are the only ones that immediately follow their own
+# distinct heading in the template's document body order.
+# ---------------------------------------------------------------------------
+
+def remove_paragraphs_after_heading_matching(doc: DocumentObject, heading_para: Paragraph, predicate) -> int:
+    """
+    Remove every paragraph appearing after *heading_para* (in document body
+    order) whose text satisfies *predicate*, stopping at the next
+    Heading-styled paragraph — i.e. scoped to "this heading's own section"
+    only. Unlike remove_paragraphs_matching (document-wide), this is for
+    static boilerplate text that might coincidentally also appear as real
+    content elsewhere in the document (e.g. a `{{Database Provider}}` token
+    reused in more than one template section) — matching within a specific
+    heading's section avoids deleting an unrelated paragraph that happens to
+    share the same substring. Returns the count removed.
+    """
+    body = doc.element.body
+    found_heading = False
+    to_remove = []
+    for child in body.iterchildren():
+        if not found_heading:
+            if child is heading_para._p:
+                found_heading = True
+            continue
+        if child.tag == qn("w:p"):
+            p_pr = child.find(qn("w:pPr"))
+            style_val = None
+            if p_pr is not None:
+                p_style = p_pr.find(qn("w:pStyle"))
+                if p_style is not None:
+                    style_val = p_style.get(qn("w:val"))
+            if style_val and style_val.startswith("Heading"):
+                break
+            text = "".join(t.text or "" for t in child.iter(qn("w:t")))
+            if predicate(text):
+                to_remove.append(child)
+    for p in to_remove:
+        p.getparent().remove(p)
+    return len(to_remove)
+
+
+def find_table_after_heading(doc: DocumentObject, heading_para: Paragraph) -> Table | None:
+    """
+    Return the first table appearing after *heading_para* in document body
+    order, stopping (returning None) if another Heading-styled paragraph is
+    reached first — i.e. only a table that sits directly under this specific
+    heading (before the next one) counts as "this heading's table."
+    """
+    body = doc.element.body
+    found_heading = False
+    for child in body.iterchildren():
+        if not found_heading:
+            if child is heading_para._p:
+                found_heading = True
+            continue
+        if child.tag == qn("w:tbl"):
+            return Table(child, doc)
+        if child.tag == qn("w:p"):
+            p_pr = child.find(qn("w:pPr"))
+            style_val = None
+            if p_pr is not None:
+                p_style = p_pr.find(qn("w:pStyle"))
+                if p_style is not None:
+                    style_val = p_style.get(qn("w:val"))
+            if style_val and style_val.startswith("Heading"):
+                return None
+    return None
+
+
 def insert_blocks_after(paragraph: Paragraph, blocks: list["Block"], normal_style: str = "Normal") -> Paragraph:
     """
     Insert a sequence of Block objects (see markdown_lite_to_blocks) after

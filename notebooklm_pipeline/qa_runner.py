@@ -22,6 +22,7 @@ from pathlib import Path
 
 from notebooklm_pipeline import orchestrator, question_bank
 from notebooklm_pipeline.nblm_client import AskResult, NblmError, ask
+from notebooklm_pipeline.section_cleanup import resolved_citations_block
 from scripts.report_constants import pe_marker
 
 logger = logging.getLogger(__name__)
@@ -47,6 +48,10 @@ class QaResults:
     sections: dict[str, str] = field(default_factory=dict)
     # database_source -> list of raw record dicts (schema per question_bank)
     edr_hits: dict[str, list[dict]] = field(default_factory=dict)
+    # "aerial" | "sanborn" | "city_directory" -> list of row dicts, feeds
+    # scripts/export_docx.populate_historical_tables() (see question_bank.
+    # historical_table_questions()).
+    historical_tables: dict[str, list[dict]] = field(default_factory=dict)
     site_photos: str = ""
     maps: str = ""
     site_visit_notes: str = ""
@@ -86,7 +91,7 @@ async def _ask_one_section_part(
     """Ask one section question (or extra_questions part), applying the same
     thin-answer follow-up logic as the main question."""
     result = await _safe_ask(client, notebook_id, question, results, label)
-    answer, citations = result.answer, result.citations
+    answer, citations, structured = result.answer, result.citations, result.structured_citations
 
     if orchestrator.is_thin_answer(answer):
         followup = orchestrator.build_followup_question(question, answer, section_name)
@@ -95,11 +100,15 @@ async def _ask_one_section_part(
             # Prefer whichever answer is less thin; a thin follow-up answer
             # still gets used so nothing is silently dropped.
             if not orchestrator.is_thin_answer(followup_result.answer):
-                answer, citations = followup_result.answer, followup_result.citations
+                answer, citations, structured = (
+                    followup_result.answer, followup_result.citations, followup_result.structured_citations
+                )
             elif len(followup_result.answer.strip()) > len(answer.strip()):
-                answer, citations = followup_result.answer, followup_result.citations
+                answer, citations, structured = (
+                    followup_result.answer, followup_result.citations, followup_result.structured_citations
+                )
 
-    return AskResult(answer=answer, citations=citations)
+    return AskResult(answer=answer, citations=citations, structured_citations=structured)
 
 
 async def _ask_sections(client, notebook_id: str, project_path: Path, results: QaResults) -> None:
@@ -107,6 +116,7 @@ async def _ask_sections(client, notebook_id: str, project_path: Path, results: Q
         label = f"Section {sq.section_num} ({sq.section_name})"
         first = await _ask_one_section_part(client, notebook_id, sq.question, sq.section_name, label, results)
         answer, citations = first.answer, list(first.citations)
+        structured_citations = list(first.structured_citations)
 
         # Sections whose template is split (currently only 5.0, to keep any
         # single NotebookLM response small enough for the streaming decoder
@@ -117,13 +127,32 @@ async def _ask_sections(client, notebook_id: str, project_path: Path, results: Q
             part = await _ask_one_section_part(client, notebook_id, extra_question, sq.section_name, part_label, results)
             answer = answer.rstrip() + "\n\n" + part.answer.lstrip()
             citations.extend(part.citations)
+            structured_citations.extend(part.structured_citations)
 
-        _save_answer(project_path, f"section_{sq.filename}", AskResult(answer=answer, citations=citations))
-        results.sections[sq.filename] = answer
         if orchestrator.is_thin_answer(answer):
             results.unresolved.append(
                 f"Section {sq.section_num} ({sq.section_name}) — answer still thin after follow-up; review manually."
             )
+
+        # Resolve inline [N] citation markers to a real "Citations:" list
+        # (source + page, when NotebookLM's response actually carried that
+        # metadata) rather than leaving unresolved brackets — see
+        # section_cleanup.resolved_citations_block. When no structured
+        # citation data comes back (the observed case for every section in
+        # the 631 Northland run — "(none returned)"), this is a no-op and
+        # assemble.write_sections's default clean_section_markdown() call
+        # strips the bare [N] markers instead, since an unresolved citation
+        # marker is worse than none. Applied after the thin-answer check so
+        # a decorative citations list never masks a genuinely thin answer.
+        citations_block = resolved_citations_block(structured_citations)
+        if citations_block:
+            answer = answer.rstrip() + "\n\n" + citations_block + "\n"
+
+        _save_answer(
+            project_path, f"section_{sq.filename}",
+            AskResult(answer=answer, citations=citations, structured_citations=structured_citations),
+        )
+        results.sections[sq.filename] = answer
 
 
 async def _ask_edr(client, notebook_id: str, project_path: Path, results: QaResults) -> None:
@@ -150,6 +179,32 @@ async def _ask_edr(client, notebook_id: str, project_path: Path, results: QaResu
                 records = []
 
         results.edr_hits[eq.database_source] = records
+
+
+async def _ask_historical_tables(client, notebook_id: str, project_path: Path, results: QaResults) -> None:
+    """Ask for structured (JSON) aerial/Sanborn/city-directory rows so
+    scripts/export_docx.populate_historical_tables() has real per-row data
+    for template tables §5.2.1/§5.2.2/§5.2.3 — see question_bank.
+    historical_table_questions()'s docstring for why these were previously
+    left as unresolved {{placeholder}} cells."""
+    for hq in question_bank.historical_table_questions():
+        result = await _safe_ask(
+            client, notebook_id, hq.question, results, f"Historical table '{hq.table_key}'"
+        )
+        _save_answer(project_path, f"historical_{hq.table_key}", result)
+
+        if result.answer == pe_marker():
+            rows = []
+        else:
+            rows = orchestrator.try_parse_json_array(result.answer)
+            if rows is None:
+                results.unresolved.append(
+                    f"Historical table '{hq.table_key}' — answer was not valid JSON; see "
+                    f"NBLM_Answers/historical_{hq.table_key}.md for the raw answer."
+                )
+                rows = []
+
+        results.historical_tables[hq.table_key] = rows
 
 
 async def _ask_vision_and_guidance(client, notebook_id: str, project_path: Path, results: QaResults) -> None:
@@ -187,6 +242,9 @@ async def run_qa(client, notebook_id: str, project_path: Path) -> QaResults:
 
     logger.info("qa_runner: asking EDR enumeration questions")
     await _ask_edr(client, notebook_id, project_path, results)
+
+    logger.info("qa_runner: asking historical table questions")
+    await _ask_historical_tables(client, notebook_id, project_path, results)
 
     logger.info("qa_runner: asking vision + site-visit guidance questions")
     await _ask_vision_and_guidance(client, notebook_id, project_path, results)

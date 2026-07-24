@@ -9,16 +9,21 @@ No Claude or NotebookLM calls are involved — this module is pure formatting.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from agents.writer import SECTIONS
 from notebooklm_pipeline.assemble import (
     AUTO_DRAFT_RADIUS_FT,
+    assemble,
+    build_qualifications_markdown,
     classify_distance,
     write_dashboard,
     write_edr_hits,
+    write_historical_tables,
     write_sections,
 )
 from scripts.export_docx import load_dashboard_meta, load_edr_hit_records, parse_writer_sections
@@ -75,6 +80,60 @@ class TestWriteDashboard:
         loaded = load_dashboard_meta(project)
         assert loaded["client_name"] == 'Acme "Best" Corp'
 
+    def test_identity_fields_default_to_pe_marker_not_notebooklm_values(self, tmp_path: Path):
+        # assessor_name/reviewer_name/title/last_name are never in
+        # results.dashboard (question_bank no longer asks NotebookLM for
+        # them) — write_dashboard must fall back to a PE marker, never a
+        # blank or a fabricated identity.
+        project = tmp_path / "TestProject"
+        project.mkdir()
+        write_dashboard(project, "TestProject", {"site_address": "123 Main St"})
+        loaded = load_dashboard_meta(project)
+        assert PE_MARKER in loaded["assessor_name"]
+        assert PE_MARKER in loaded["reviewer_name"]
+        assert PE_MARKER in loaded["title"]
+        assert PE_MARKER in loaded["last_name"]
+
+
+class TestBuildQualificationsMarkdown:
+    def test_uses_dashboard_firm_and_ep_identity(self):
+        dashboard = {
+            "ep_firm": "Envicon Engineering",
+            "assessor_name": "Shivansh Dutta",
+            "title": "Senior Environmental Professional",
+            "reviewer_name": "Jason Dutta",
+        }
+        out = build_qualifications_markdown(dashboard, "TestProject")
+        assert "# 11.0 Qualifications and Declaration of Environmental Professionals" in out
+        assert "Envicon Engineering" in out
+        assert "Shivansh Dutta" in out
+        assert "Jason Dutta" in out
+        # Never mentions a third-party firm/name — this function only ever
+        # reads the dashboard dict it's given.
+        assert "Ravi Engineering" not in out
+        assert "Reddy" not in out
+
+    def test_missing_fields_become_pe_marker(self):
+        out = build_qualifications_markdown({}, "TestProject")
+        assert PE_MARKER in out
+        assert "Envicon" not in out  # no fabricated firm name
+
+
+class TestAssembleWritesQualificationsEvenWithoutNotebookLMAnswer:
+    def test_11_qualifications_written_from_dashboard_not_results_sections(self, tmp_path: Path):
+        project = tmp_path / "TestProject"
+        (project / "Report_Sections").mkdir(parents=True)
+        results = SimpleNamespace(
+            dashboard={"ep_firm": "Envicon Engineering", "assessor_name": "Shivansh Dutta"},
+            sections={},  # NotebookLM never asked for 11.0 — should be empty here
+            edr_hits={},
+            historical_tables={},
+        )
+        assemble(project, "TestProject", results)
+        content = (project / "Report_Sections" / "11_Qualifications.md").read_text(encoding="utf-8")
+        assert "Envicon Engineering" in content
+        assert "Shivansh Dutta" in content
+
 
 class TestWriteSections:
     def test_writes_all_provided_sections_with_draft_marker(self, tmp_path: Path):
@@ -109,6 +168,21 @@ class TestWriteSections:
         write_sections(project, sections)
         parsed = parse_writer_sections(project / "Report_Sections")
         assert parsed.get("1.1 purpose") == "Grounded purpose text."
+
+
+class TestWriteHistoricalTables:
+    def test_writes_json_readable_back(self, tmp_path: Path):
+        project = tmp_path / "TestProject"
+        project.mkdir()
+        tables = {
+            "aerial": [{"year": "1950", "subject_property": "Vacant", "adjacent_properties": "Industrial"}],
+            "sanborn": [],
+            "city_directory": [{"year": "1965", "address": "631 Northland Ave", "occupant": "Example Co."}],
+        }
+        out_path = write_historical_tables(project, tables)
+        assert out_path.exists()
+        loaded = json.loads(out_path.read_text(encoding="utf-8"))
+        assert loaded == tables
 
 
 class TestWriteEdrHits:
