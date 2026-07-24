@@ -1,6 +1,6 @@
 ---
 name: notebooklm-esa-review
-description: Use when the user wants a summary of what still needs manual attention in a finished NotebookLM ESA draft — e.g. "what's left to review in this report", "summarize what the PE needs to check", "is this draft ready for review", or right after notebooklm-esa-intake finishes a run. Scans a project folder's output (Questions_For_User.md, Manual_Review/, the exported DOCX's remaining placeholder markers, Site_Visit_Guidance.md) and produces a single, organized checklist for the reviewing Professional Engineer — it never edits the report or makes judgment calls on the reviewer's behalf.
+description: Use when the user wants a summary of what still needs manual attention in a finished NotebookLM ESA draft — e.g. "what's left to review in this report", "summarize what the PE needs to check", "is this draft ready for review", or right after notebooklm-esa-intake finishes a run. Scans a project folder's output (Questions_For_User.md, Manual_Review/, the exported DOCX's remaining placeholder markers, Site_Visit_Guidance.md) and produces a single, organized checklist for the reviewing Professional Engineer. Can also generate a shareable HTML fill-in form of the open gaps for a field engineer to complete (published as a claude.ai Artifact link and saved as a local .html anyone can open offline), and fold their returned answers back into the report and DOCX. Never edits the report or makes a judgment call on the reviewer's behalf — filled answers only replace the exact gap they were asked about.
 ---
 
 # NotebookLM ESA Review Prep
@@ -63,3 +63,45 @@ artifacts below).
    - A closing line restating this is a NotebookLM-grounded draft requiring
      full PE sign-off — this summary doesn't substitute for that review, it
      only makes it faster to start.
+
+## Generating a fill-in form for a field engineer (optional)
+
+If the user wants to hand the open gaps to a field engineer instead of (or
+in addition to) reading the summary themselves — e.g. "make this shareable",
+"send this to the engineer to fill in", "generate a form for the gaps" —
+offer or run this. It never replaces the consolidated summary above; it's an
+alternate, fillable presentation of the same gaps (section markers,
+dashboard fields, and open contradictions), sourced from the same files.
+
+1. **Generate the form**, from inside `.notebooklm-esa-generator/`:
+   ```
+   uv run python -m scripts.engineer_form --project-dir "<absolute path to the project folder>"
+   ```
+   This writes `<ProjectName>/Engineer_Form/Engineer_Fill_Form.html` (the
+   shareable form) and `Engineer_Form/gaps.json` (a record of what was
+   asked). It never edits `Report_Sections/`, the dashboard, or the DOCX —
+   purely a read of the existing gaps into a new form.
+
+2. **Publish the form as a claude.ai Artifact** (use the Artifact tool on
+   the generated HTML file) so the user gets a shareable link. Also tell
+   them the local file path — the same HTML opens standalone in any browser,
+   offline, so it can be emailed to someone without claude.ai access.
+   Mention plainly that an Artifact link's reach depends on the workspace's
+   own sharing settings; the local `.html` file is the option that reaches
+   literally anyone.
+
+3. **When the engineer sends back their filled-in answers** (they click
+   "Download answers" in the form, which produces a `*_engineer_answers.json`
+   file), apply them:
+   ```
+   uv run python -m scripts.ingest_engineer_answers --project-dir "<absolute path to the project folder>" --answers "<path to the returned answers json>"
+   ```
+   This replaces each answered gap's *exact* marker text in
+   `Report_Sections/*.md`, updates matching `00_Project_Dashboard.md`
+   fields, records the engineer's notes on open contradictions to
+   `Questions_For_User.md` under "## Engineer resolutions" (their input is
+   never substituted into report prose as if it settled the question — the
+   PE still makes that call), and re-exports the DOCX. Report the printed
+   summary (filled / updated / recorded / skipped counts) plainly, including
+   anything it couldn't apply (e.g. a marker whose text no longer matches
+   exactly) so the user knows what still needs manual attention.

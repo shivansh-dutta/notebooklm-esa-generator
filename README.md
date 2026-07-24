@@ -135,7 +135,7 @@ present from an earlier run), handles login, and runs
 all land in `<ProjectName>\` itself — the pipeline's own code stays nested
 and out of the way.
 
-### The other two skills
+### The other three skills
 
 - **`skill/notebooklm-esa-preflight/`** — a standalone machine-readiness
   check. Run this once per machine (or whenever intake fails on a setup
@@ -149,9 +149,21 @@ and out of the way.
   `Site_Visit_Guidance.md`, and produces one consolidated checklist of
   exactly what the reviewing PE needs to look at. It never edits the report
   or makes a classification judgment call — purely a review-prep summary.
+  It can also turn those same open gaps into a shareable HTML fill-in form
+  for a field engineer (published as a claude.ai Artifact link, and saved
+  locally so it can be emailed to anyone) via `scripts/engineer_form.py`,
+  and fold the engineer's returned answers back into the report and DOCX
+  via `scripts/ingest_engineer_answers.py` — always an exact-match
+  replacement of the specific gap asked about, never a guess or a rewrite.
+- **`skill/notebooklm-esa-sync/`** — keeps a project's nested
+  `.notebooklm-esa-generator/` clone (and its installed skill files) current
+  with this repo's `main` branch: `git pull --ff-only`, re-`uv sync`, and
+  re-copy the `SKILL.md` files into the project's `.claude/skills/`. Pull-only
+  — it never pushes, never touches report artifacts, and never re-runs the
+  pipeline itself.
 
-All three are already seeded into `project-template/.claude/skills/` — copy
-that template folder once and a project gets all three, not just intake.
+All four are already seeded into `project-template/.claude/skills/` — copy
+that template folder once and a project gets all four, not just intake.
 
 ## What's optional vs required
 

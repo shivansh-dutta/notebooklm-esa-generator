@@ -41,6 +41,19 @@ attention (missing fields, things flagged for double-checking, and the
 site-visit checklist) into one list, instead of you having to go hunting
 through several files.
 
+If you'd rather hand the open items to a field engineer than read through
+them yourself, ask Claude Code to "make a fill-in form for the engineer" —
+it will turn the same open items into a simple web form you can share as a
+link, or as a file you email to anyone. Once they send their answers back,
+ask Claude Code to apply them and it'll update the draft and rebuild the
+Word document.
+
+## Keeping this up to date
+
+Every so often (or if something seems off), ask Claude Code to "sync/update
+the ESA generator" — it'll pull the latest version of the pipeline and its
+skills from GitHub so you're always running the current one.
+
 ## What you'll get back
 
 - A finished draft Word document.
