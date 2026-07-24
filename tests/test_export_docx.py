@@ -223,6 +223,72 @@ class TestPopulateHistoricalTables:
         assert directory_table.rows[1].cells[1].text == "631 Northland Ave"
         assert directory_table.rows[1].cells[2].text == "Example Co."
 
+    def test_more_data_rows_than_placeholder_rows_leaves_no_stale_row_in_the_middle(self, tmp_path: Path):
+        # Regression: the real Envicon template has TWO pre-existing example/
+        # placeholder rows per historical table (not one, as the other tests'
+        # 1-placeholder-row synthetic doc assumed). With 5 Sanborn entries and
+        # only 2 template placeholder rows, the old code filled row[1], left
+        # row[2] as a stale "{{...}}" placeholder, and appended the rest after
+        # it — producing 1986, » PE TO COMPLETE, 1950, 1939, ... instead of a
+        # clean sequential table. Confirmed against the real 631 Northland
+        # re-run's exported DOCX.
+        project = tmp_path / "TestProject"
+        (project / "Historical_Records").mkdir(parents=True)
+        sanborn_rows = [
+            {"year": "1986", "subject_property": "Factory", "adjacent_properties": "Niagara Machine"},
+            {"year": "1950", "subject_property": "Vacant land", "adjacent_properties": "Niagara Machine"},
+            {"year": "1939", "subject_property": "Vacant land", "adjacent_properties": "Niagara Machine"},
+            {"year": "1917", "subject_property": "Vacant land", "adjacent_properties": "Niagara Machine"},
+            {"year": "1900", "subject_property": "Vacant land", "adjacent_properties": "Vacant land"},
+        ]
+        (project / "Historical_Records" / "historical_tables.json").write_text(
+            json.dumps({"aerial": [], "sanborn": sanborn_rows, "city_directory": []}),
+            encoding="utf-8",
+        )
+        doc = Document()
+        doc.add_heading("5.2.2 Sanborn Fire Insurance Maps", level=3)
+        sanborn_table = doc.add_table(rows=3, cols=3)  # header + 2 template placeholder rows
+        for i, h in enumerate(("Year", "Subject Property", "Adjacent properties")):
+            sanborn_table.rows[0].cells[i].text = h
+        for r in (1, 2):
+            for i, v in enumerate(("{{year}}", "{{observation}}", "{{observation}}")):
+                sanborn_table.rows[r].cells[i].text = v
+        headings = build_heading_index(doc)
+
+        populate_historical_tables(doc, project, headings)
+
+        table = find_table_after_heading(doc, headings["5.2.2 sanborn fire insurance maps"])
+        years = [row.cells[0].text for row in table.rows[1:]]
+        assert years == ["1986", "1950", "1939", "1917", "1900"]
+        assert "{{year}}" not in years
+        assert len(table.rows) == 1 + len(sanborn_rows)
+
+    def test_fewer_data_rows_than_placeholder_rows_removes_leftover_placeholder(self, tmp_path: Path):
+        project = tmp_path / "TestProject"
+        (project / "Historical_Records").mkdir(parents=True)
+        (project / "Historical_Records" / "historical_tables.json").write_text(
+            json.dumps({
+                "aerial": [{"year": "1986", "subject_property": "Factory", "adjacent_properties": "Industrial"}],
+                "sanborn": [], "city_directory": [],
+            }),
+            encoding="utf-8",
+        )
+        doc = Document()
+        doc.add_heading("5.2.1 Aerial Photographs", level=3)
+        aerial_table = doc.add_table(rows=3, cols=3)  # header + 2 template placeholder rows
+        for i, h in enumerate(("Year", "Subject Property", "Adjacent properties")):
+            aerial_table.rows[0].cells[i].text = h
+        for r in (1, 2):
+            for i, v in enumerate(("{{year}}", "{{observation}}", "{{observation}}")):
+                aerial_table.rows[r].cells[i].text = v
+        headings = build_heading_index(doc)
+
+        populate_historical_tables(doc, project, headings)
+
+        table = find_table_after_heading(doc, headings["5.2.1 aerial photographs"])
+        assert len(table.rows) == 2  # header + exactly 1 filled row, leftover placeholder removed
+        assert table.rows[1].cells[0].text == "1986"
+
 
 class TestPruneUnusedAcronyms:
     def test_removes_rows_for_acronyms_never_mentioned_elsewhere(self):

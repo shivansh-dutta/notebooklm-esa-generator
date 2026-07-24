@@ -382,11 +382,22 @@ def populate_historical_tables(doc, project_path: Path, headings: dict) -> None:
         if table is None or len(table.rows) < 2:
             continue
 
-        first_row_values = [str(rows[0].get(c, "")) for c in columns]
-        for cell, value in zip(table.rows[1].cells, first_row_values):
-            set_cell_text(cell, value)
-        for row_data in rows[1:]:
-            append_row_like(table, 1, [str(row_data.get(c, "")) for c in columns])
+        # Fill every pre-existing placeholder row (below the header) before
+        # appending new ones — filling only row[1] and leaving any further
+        # template placeholder rows (e.g. a 2-example-row template) untouched
+        # left a stale "{{...}}"->PE_MARKER row wedged between real data rows.
+        existing_placeholder_rows = table.rows[1:]
+        for idx, row_data in enumerate(rows):
+            values = [str(row_data.get(c, "")) for c in columns]
+            if idx < len(existing_placeholder_rows):
+                for cell, value in zip(existing_placeholder_rows[idx].cells, values):
+                    set_cell_text(cell, value)
+            else:
+                append_row_like(table, 1, values)
+
+        # Remove any placeholder rows left over beyond what real data filled.
+        for row in existing_placeholder_rows[len(rows):]:
+            row._element.getparent().remove(row._element)
 
 
 # ---------------------------------------------------------------------------
