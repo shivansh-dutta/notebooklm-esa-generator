@@ -71,6 +71,27 @@ class TestCollectSectionMarkerGaps:
         for g in gaps:
             assert "declare that" not in g.match
 
+    def test_mid_sentence_markers_bounded_by_markdown_bold_do_not_swallow_text_between(self, tmp_path: Path):
+        # Regression: the real 01_Introduction.md wraps each marker in its
+        # own bold span — "...conducted on **» PE TO COMPLETE: site
+        # reconnaissance date** by **» PE TO COMPLETE: Environmental
+        # Professional name**." Stopping only at the next marker/newline/em
+        # dash still let the first marker's match swallow "** by **" — the
+        # real word "by" and both bold delimiters — between the two markers.
+        text = (
+            "The site reconnaissance was conducted on "
+            "**» PE TO COMPLETE: site reconnaissance date** by "
+            "**» PE TO COMPLETE: Environmental Professional name**.\n"
+        )
+        _write(tmp_path / "Report_Sections" / "01_Introduction.md", text)
+        gaps = collect_gaps(tmp_path)
+        assert len(gaps) == 2
+        assert gaps[0].match == "» PE TO COMPLETE: site reconnaissance date"
+        assert gaps[1].match == "» PE TO COMPLETE: Environmental Professional name"
+        for g in gaps:
+            assert "by" not in g.match
+            assert "**" not in g.match
+
     def test_no_report_sections_dir_returns_no_section_gaps(self, tmp_path: Path):
         assert collect_gaps(tmp_path) == []
 
@@ -161,12 +182,75 @@ class TestBuildFormHtml:
     def test_decisions_rendered_in_distinct_group_not_as_plain_fillable(self):
         gaps = [Gap(id="dec-001-cccc", kind="decision", section="Automated consistency review", prompt="Conflict X")]
         out = build_form_html(gaps, "Test Project")
-        assert "Decisions needed" in out
+        assert "gap-group-decide" in out
         assert "Conflict X" in out
+        # A plain-language explainer for someone who isn't the report author.
+        assert "won't change the report text" in out
 
     def test_empty_state_when_no_gaps(self):
         out = build_form_html([], "Test Project")
         assert "No open gaps found" in out
+
+    def test_has_submit_button_and_output_panel(self):
+        gaps = [
+            Gap(id="sec-001-aaaa", kind="section_marker", section="A", prompt="p",
+                marker_kind="PE TO COMPLETE", file="a.md", match="» PE TO COMPLETE: p"),
+        ]
+        out = build_form_html(gaps, "Test Project")
+        assert 'id="submit-btn"' in out
+        assert 'id="submit-panel"' in out
+        assert 'id="submit-output"' in out
+        assert 'id="copy-btn"' in out
+        assert 'id="download-btn"' in out
+
+
+class TestHumanizeDecisionPrompts:
+    def test_numbered_filename_becomes_section_label(self, tmp_path: Path):
+        _write(
+            tmp_path / "Questions_For_User.md",
+            "# Questions For User\n\n## Automated consistency review\n\n"
+            "- CREC/HREC contradiction: 05_Records_Review.md says X but 08_Findings_Opinions_Conclusions.md says Y.\n",
+        )
+        gaps = collect_gaps(tmp_path)
+        decision = next(g for g in gaps if g.kind == "decision")
+        assert "05_Records_Review.md" not in decision.prompt
+        assert "Section 5.0 (Records Review)" in decision.prompt
+        assert "Section 8.0 (Findings Opinions Conclusions)" in decision.prompt
+
+    def test_bare_filename_becomes_plain_label(self, tmp_path: Path):
+        _write(
+            tmp_path / "Questions_For_User.md",
+            "# Questions For User\n\n## Automated consistency review\n\n"
+            "- REC count mismatch: Executive_Summary.md lists 4 RECs but the body lists 6.\n",
+        )
+        gaps = collect_gaps(tmp_path)
+        decision = next(g for g in gaps if g.kind == "decision")
+        assert "Executive_Summary.md" not in decision.prompt
+        assert "Executive Summary" in decision.prompt
+
+    def test_notebooklm_failure_bullet_is_simplified(self, tmp_path: Path):
+        _write(
+            tmp_path / "Questions_For_User.md",
+            "# Questions For User\n\n"
+            "- Section 2.0 (Site Description) — NotebookLM request failed: chat.ask failed for question "
+            "'Draft Section 2.0': No parseable chunks in streaming chat response (6 lines scanned).\n",
+        )
+        gaps = collect_gaps(tmp_path)
+        decision = next(g for g in gaps if g.kind == "decision")
+        assert "chat.ask" not in decision.prompt
+        assert "streaming chat response" not in decision.prompt
+        assert "Section 2.0 (Site Description) could not be auto-drafted" in decision.prompt
+
+    def test_historical_table_failure_bullet_is_simplified(self, tmp_path: Path):
+        _write(
+            tmp_path / "Questions_For_User.md",
+            "# Questions For User\n\n"
+            "- Historical table 'aerial' — answer was not valid JSON; see NBLM_Answers/historical_aerial.md.\n",
+        )
+        gaps = collect_gaps(tmp_path)
+        decision = next(g for g in gaps if g.kind == "decision")
+        assert "valid JSON" not in decision.prompt
+        assert "aerial historical-records table" in decision.prompt
 
 
 class TestWriteEngineerForm:

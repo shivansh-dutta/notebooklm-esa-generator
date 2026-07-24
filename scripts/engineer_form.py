@@ -60,11 +60,60 @@ logger = logging.getLogger(__name__)
 # the second marker's captured span would swallow the real "declare that…"
 # sentence that follows it, and filling that gap would silently delete real
 # report content instead of just the gap — stopping at "—" keeps the
-# round-trip an exact, content-preserving substitution.
+# round-trip an exact, content-preserving substitution. Markdown bold (**)
+# is a second, real-world case of the same problem: assemble.py's generated
+# Section 1.0 Introduction wraps each marker in its own bold span —
+# "conducted on **» PE TO COMPLETE: site reconnaissance date** by **» PE TO
+# COMPLETE: Environmental Professional name**." — so a description that ran
+# up to the next marker/newline/em-dash would still swallow the closing
+# "**" and the real "by **" text between the two markers. A char class can
+# only exclude single characters, so the two-character "**" boundary uses a
+# negative-lookahead stop instead: consume any character not starting one of
+# the marker/newline/em-dash/double-asterisk boundaries.
 _MARKER_RE = re.compile(
-    rf"(?:{re.escape(PE_MARKER)}|{re.escape(MISSING_INPUT_MARKER)})(?::[^»—\n]*)?"
+    rf"(?:{re.escape(PE_MARKER)}|{re.escape(MISSING_INPUT_MARKER)})(?::(?:(?!»|—|\*\*|\n).)*)?"
 )
 _DASHBOARD_FIELD_RE = re.compile(r"^Dashboard field '([\w]+)' not found in sources\.$")
+
+# Questions_For_User.md's "decision" bullets are written for a PE who already
+# has the whole project folder open — they reference internal filenames
+# ("05_Records_Review.md") and, for a failed NotebookLM call, raw client
+# internals ("chat.ask failed", "No parseable chunks in streaming chat
+# response"). None of that means anything to an engineer looking at just
+# this form, so it's rewritten into plain language before it's ever shown.
+_NOTEBOOKLM_FAILURE_RE = re.compile(r"^(Section [\d.]+ \([^)]+\)) — NotebookLM request failed:")
+_HISTORICAL_TABLE_FAILURE_RE = re.compile(r"^Historical table '([^']+)' — answer was not valid JSON")
+_NUMBERED_FILE_RE = re.compile(r"\b(\d{1,2})_([A-Za-z]+(?:_[A-Za-z]+)*)\.md\b")
+_BARE_FILE_RE = re.compile(r"\b([A-Za-z][A-Za-z]*(?:_[A-Za-z]+)*)\.md\b")
+
+
+def _numbered_file_repl(m: re.Match) -> str:
+    number, rest = m.groups()
+    return f"Section {int(number)}.0 ({rest.replace('_', ' ')})"
+
+
+def _bare_file_repl(m: re.Match) -> str:
+    return m.group(1).replace("_", " ")
+
+
+def _humanize_filenames(text: str) -> str:
+    """Replace internal 'NN_Section_Name.md' / 'Executive_Summary.md' style
+    filenames with the plain section label a report reader would recognize."""
+    text = _NUMBERED_FILE_RE.sub(_numbered_file_repl, text)
+    return _BARE_FILE_RE.sub(_bare_file_repl, text)
+
+
+def _humanize_decision_prompt(bullet: str) -> str:
+    m = _NOTEBOOKLM_FAILURE_RE.match(bullet)
+    if m:
+        return f"{m.group(1)} could not be auto-drafted — this section still needs to be written from scratch."
+    m = _HISTORICAL_TABLE_FAILURE_RE.match(bullet)
+    if m:
+        return (
+            f"The {m.group(1).replace('_', ' ')} historical-records table couldn't be filled in "
+            "automatically — please fill it in from the source documents."
+        )
+    return _humanize_filenames(bullet)
 
 
 @dataclass
@@ -164,7 +213,7 @@ def _parse_questions_for_user(project_path: Path) -> list[Gap]:
                 id=_make_id("dec", idx, bullet),
                 kind="decision",
                 section=current_section,
-                prompt=bullet,
+                prompt=_humanize_decision_prompt(bullet),
             )
         )
     return gaps
@@ -196,10 +245,12 @@ def _card_html(gap: Gap) -> str:
     elif gap.kind == "dashboard_field":
         chip = '<span class="chip chip-accent">DASHBOARD</span>'
 
-    tag_bits = [html.escape(gap.section)]
-    if gap.file:
-        tag_bits.append(html.escape(gap.file))
-    tag = " · ".join(tag_bits)
+    # Cards are already grouped under an <h2>{section}</h2> heading, and the
+    # raw filename (e.g. "05_Records_Review.md") is exactly the kind of
+    # internal detail an engineer reading just this form shouldn't need to
+    # parse — so the tag only repeats the section label for decision cards,
+    # which aren't grouped under their own per-section heading below.
+    tag = html.escape(gap.section) if gap.kind == "decision" else ""
 
     return f"""
     <article class="gap-card" data-id="{html.escape(gap.id)}">
@@ -243,9 +294,21 @@ def build_form_html(gaps: list[Gap], project_name: str) -> str:
     if total == 0:
         body = '<p class="empty-state">No open gaps found — nothing for the engineer to fill in right now.</p>'
     else:
+        decisions_section = (
+            '<section class="gap-group gap-group-decide">'
+            "<h2>Things that don't add up</h2>"
+            "<p class=\"group-intro\">The draft says two different things in two places below. "
+            "Read both and add a note on what's actually correct (or what more detail would settle "
+            "it) — this goes to the reviewing engineer as a note, it won't change the report text by "
+            "itself.</p>"
+            + decisions_html
+            + "</section>"
+            if decisions
+            else ""
+        )
         body = f"""
     {fillable_html}
-    {'<section class="gap-group gap-group-decide"><h2>Decisions needed <span class="hint">(recorded for the PE, never auto-resolved)</span></h2>' + decisions_html + '</section>' if decisions else ''}"""
+    {decisions_section}"""
 
     return f"""<title>Engineer Fill-In Form — {project_label}</title>
 <style>
@@ -309,8 +372,8 @@ header.top h1 {{ margin: 0; font-size: 1.4rem; text-wrap: balance; }}
   font-size: 1rem; margin: 0 0 10px; color: var(--muted);
   font-weight: 600; letter-spacing: 0.01em;
 }}
-.gap-group h2 .hint {{ font-weight: 400; font-size: 0.85rem; }}
 .gap-group-decide h2 {{ color: var(--decide); }}
+.group-intro {{ color: var(--muted); margin: 0 0 14px; max-width: 62ch; }}
 .gap-card {{
   background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
   padding: 14px 16px; margin-bottom: 10px;
@@ -346,6 +409,19 @@ button {{
 button.secondary {{ background: transparent; color: var(--accent); }}
 button:focus-visible {{ outline: 2px solid var(--accent); outline-offset: 2px; }}
 #copy-status {{ font-size: 0.85rem; color: var(--muted); align-self: center; }}
+.submit-panel {{
+  margin: 28px 0 20px; padding: 16px; border: 1px solid var(--accent); border-radius: 10px;
+  background: var(--surface);
+}}
+.submit-panel h2 {{ margin: 0 0 8px; font-size: 1.05rem; }}
+.submit-panel p {{ color: var(--muted); margin: 0 0 12px; max-width: 62ch; }}
+#submit-output {{
+  width: 100%; min-height: 160px; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--ground); color: var(--ink);
+  font-family: ui-monospace, Consolas, "SFMono-Regular", monospace; font-size: 0.8rem;
+  padding: 10px; resize: vertical;
+}}
+.submit-actions {{ display: flex; gap: 10px; align-items: center; margin-top: 10px; }}
 @media (prefers-reduced-motion: no-preference) {{
   .gap-card {{ transition: border-color 0.15s ease; }}
 }}
@@ -357,11 +433,21 @@ button:focus-visible {{ outline: 2px solid var(--accent); outline-offset: 2px; }
     <span id="progress"></span>
   </header>
   {body}
+  <section id="submit-panel" class="submit-panel" hidden>
+    <h2>Your answers are ready</h2>
+    <p>Copy the text below and paste it into your chat with Claude (something like "here are the
+      engineer's answers" followed by a paste) — Claude will apply them to the report and rebuild
+      the Word document. There's no separate upload step; pasting this back is the submission.</p>
+    <textarea id="submit-output" readonly rows="10"></textarea>
+    <div class="submit-actions">
+      <button id="copy-btn">Copy to clipboard</button>
+      <span id="copy-status"></span>
+    </div>
+  </section>
 </div>
 <footer class="bottom">
-  <button id="download-btn">Download answers (JSON)</button>
-  <button class="secondary" id="copy-btn">Copy all</button>
-  <span id="copy-status"></span>
+  <button id="submit-btn">Submit answers</button>
+  <button class="secondary" id="download-btn">Download as a file instead</button>
 </footer>
 <script id="gaps-data" type="application/json">{gaps_json}</script>
 <script>
@@ -400,14 +486,40 @@ button:focus-visible {{ outline: 2px solid var(--accent); outline-offset: 2px; }
   updateProgress();
 
   function collectAnswers() {{
+    // Only gaps the engineer actually answered — an ingest that skips blanks
+    // anyway, and a pasted-into-chat payload, both read better without a
+    // long tail of empty entries.
     var byId = {{}};
-    textareas.forEach(function (ta) {{ byId[ta.dataset.id] = ta.value; }});
-    return gaps.map(function (g) {{
-      var copy = Object.assign({{}}, g);
-      copy.answer = byId[g.id] || "";
-      return copy;
-    }});
+    textareas.forEach(function (ta) {{ byId[ta.dataset.id] = ta.value.trim(); }});
+    return gaps
+      .map(function (g) {{
+        var copy = Object.assign({{}}, g);
+        copy.answer = byId[g.id] || "";
+        return copy;
+      }})
+      .filter(function (g) {{ return g.answer.length > 0; }});
   }}
+
+  function scrollToPanel(panel) {{
+    var reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    panel.scrollIntoView({{ behavior: reduceMotion ? "auto" : "smooth", block: "start" }});
+  }}
+
+  document.getElementById("submit-btn").addEventListener("click", function () {{
+    var answers = collectAnswers();
+    var panel = document.getElementById("submit-panel");
+    var output = document.getElementById("submit-output");
+    var status = document.getElementById("copy-status");
+    panel.hidden = false;
+    if (answers.length === 0) {{
+      output.value = "";
+      status.textContent = "Nothing answered yet — fill in at least one field above, then submit again.";
+    }} else {{
+      output.value = JSON.stringify(answers, null, 2);
+      status.textContent = "";
+    }}
+    scrollToPanel(panel);
+  }});
 
   document.getElementById("download-btn").addEventListener("click", function () {{
     var blob = new Blob([JSON.stringify(collectAnswers(), null, 2)], {{ type: "application/json" }});
@@ -422,12 +534,21 @@ button:focus-visible {{ outline: 2px solid var(--accent); outline-offset: 2px; }
   }});
 
   document.getElementById("copy-btn").addEventListener("click", function () {{
-    var text = JSON.stringify(collectAnswers(), null, 2);
+    var output = document.getElementById("submit-output");
     var status = document.getElementById("copy-status");
-    function ok() {{ status.textContent = "Copied to clipboard."; }}
-    function fail() {{ status.textContent = "Couldn't copy automatically — use Download instead."; }}
+    if (!output.value) {{
+      status.textContent = "Nothing to copy yet — submit first.";
+      return;
+    }}
+    function ok() {{ status.textContent = "Copied — paste it into your chat with Claude."; }}
+    function fail() {{
+      output.removeAttribute("readonly");
+      output.focus();
+      output.select();
+      status.textContent = "Couldn't copy automatically — the text is selected, press Ctrl/Cmd+C.";
+    }}
     if (navigator.clipboard && navigator.clipboard.writeText) {{
-      navigator.clipboard.writeText(text).then(ok, fail);
+      navigator.clipboard.writeText(output.value).then(ok, fail);
     }} else {{
       fail();
     }}
