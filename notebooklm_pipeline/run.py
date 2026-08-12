@@ -59,7 +59,7 @@ import logging
 import sys
 from pathlib import Path
 
-from notebooklm_pipeline import assemble, consistency, ingest, qa_runner, review_pass, site_visit_guidance, source_manifest
+from notebooklm_pipeline import assemble, consistency, ingest, notebook_state, qa_runner, review_pass, site_visit_guidance, source_manifest
 from notebooklm_pipeline.nblm_client import NblmError, create_notebook, open_client
 from scripts import init_project
 from scripts.export_docx import run_export_docx
@@ -106,6 +106,11 @@ async def _run_async(args: argparse.Namespace) -> Path:
             sources = await ingest.run_ingest(client, notebook_id, project_path, raw_pdf_path)
             logger.info("run: uploaded %d source(s)", len(sources))
             source_manifest.write_source_manifest(project_path, sources)
+
+        # Persist notebook_id before the question bank runs (the likeliest
+        # phase to fail) so a caller can resume against this same notebook
+        # via --notebook-id without knowing the ID up front.
+        notebook_state.write_notebook_id(project_path, notebook_id)
 
         logger.info("run: running question bank against the notebook")
         results = await qa_runner.run_qa(client, notebook_id, project_path)

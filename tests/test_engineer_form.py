@@ -26,6 +26,7 @@ class TestCollectSectionMarkerGaps:
         g = gaps[0]
         assert g.kind == "section_marker"
         assert g.marker_kind == "PE TO COMPLETE"
+        assert g.marker_label == "Needs your input"
         assert g.file == "05_Records_Review.md"
         assert g.match == '» PE TO COMPLETE: Record any additional sources reviewed, or "None."'
         assert "Record any additional sources reviewed" in g.prompt

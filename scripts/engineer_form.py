@@ -116,6 +116,15 @@ def _humanize_decision_prompt(bullet: str) -> str:
     return _humanize_filenames(bullet)
 
 
+# Internal template marker text -> what a reviewing engineer should actually
+# see. marker_kind stays as the raw template string (used for chip_class /
+# other internal logic); marker_label is the display-facing version.
+_MARKER_LABEL = {
+    "PE TO COMPLETE": "Needs your input",
+    "MISSING INPUT": "Missing source document",
+}
+
+
 @dataclass
 class Gap:
     id: str
@@ -123,6 +132,7 @@ class Gap:
     section: str  # human-readable grouping label
     prompt: str  # what to show/ask the engineer
     marker_kind: str | None = None  # "PE TO COMPLETE" | "MISSING INPUT" (section_marker only)
+    marker_label: str | None = None  # display-facing version of marker_kind
     file: str | None = None  # Report_Sections/<file> (section_marker only)
     match: str | None = None  # exact substring to replace (section_marker only)
     field_name: str | None = None  # 00_Project_Dashboard.md key (dashboard_field only)
@@ -162,6 +172,7 @@ def _collect_section_marker_gaps(project_path: Path) -> list[Gap]:
                     section=_section_label(md_path.name),
                     prompt=description or f"({marker_kind} — no further description)",
                     marker_kind=marker_kind,
+                    marker_label=_MARKER_LABEL.get(marker_kind, marker_kind),
                     file=md_path.name,
                     match=raw,
                 )
@@ -231,17 +242,12 @@ def collect_gaps(project_path: Path) -> list[Gap]:
 # HTML form
 # ---------------------------------------------------------------------------
 
-_CHIP_LABEL = {
-    "PE TO COMPLETE": "PE TO COMPLETE",
-    "MISSING INPUT": "MISSING INPUT",
-}
-
 
 def _card_html(gap: Gap) -> str:
     chip = ""
     if gap.kind == "section_marker":
         chip_class = "chip-warn" if gap.marker_kind == "MISSING INPUT" else "chip-accent"
-        chip = f'<span class="chip {chip_class}">{html.escape(gap.marker_kind or "")}</span>'
+        chip = f'<span class="chip {chip_class}">{html.escape(gap.marker_label or gap.marker_kind or "")}</span>'
     elif gap.kind == "dashboard_field":
         chip = '<span class="chip chip-accent">DASHBOARD</span>'
 

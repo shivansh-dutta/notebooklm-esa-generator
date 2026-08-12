@@ -14,7 +14,23 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from notebooklm_pipeline.nblm_client import _extract_structured_citation, ask
+from notebooklm_pipeline.nblm_client import NblmError, _extract_structured_citation, ask, delete_notebook
+
+
+class TestDeleteNotebook:
+    @pytest.mark.asyncio
+    async def test_calls_client_notebooks_delete(self):
+        client = SimpleNamespace(notebooks=SimpleNamespace(delete=AsyncMock()))
+        await delete_notebook(client, "nb-123")
+        client.notebooks.delete.assert_awaited_once_with("nb-123")
+
+    @pytest.mark.asyncio
+    async def test_wraps_failure_in_nblm_error(self):
+        client = SimpleNamespace(
+            notebooks=SimpleNamespace(delete=AsyncMock(side_effect=RuntimeError("boom")))
+        )
+        with pytest.raises(NblmError):
+            await delete_notebook(client, "nb-123")
 
 
 class TestExtractStructuredCitation:

@@ -21,6 +21,7 @@ async context; see run.py for the single top-level asyncio.run call):
     NblmError
     open_client() -> async context manager yielding a connected client
     create_notebook(client, title) -> notebook (has .id, .title)
+    delete_notebook(client, notebook_id) -> None
     add_source(client, notebook_id, file_path, wait=True) -> source
     ask(client, notebook_id, question) -> AskResult(answer, citations)
 """
@@ -155,6 +156,23 @@ async def create_notebook(client: Any, title: str) -> Any:
         raise NblmError(f"Failed to create notebook '{title}': {exc}") from exc
     logger.info("nblm_client: created notebook %r (id=%s)", title, getattr(notebook, "id", "?"))
     return notebook
+
+
+async def delete_notebook(client: Any, notebook_id: str) -> None:
+    """Delete a NotebookLM notebook. Raises NblmError if the underlying
+    library call fails (e.g. the notebook was already deleted)."""
+    try:
+        await client.notebooks.delete(notebook_id)
+    except Exception as exc:
+        raise NblmError(f"Failed to delete notebook {notebook_id}: {exc}") from exc
+    logger.info("nblm_client: deleted notebook %s", notebook_id)
+
+
+async def delete_notebook_by_id(notebook_id: str) -> None:
+    """Convenience wrapper for one-off deletes: opens its own client rather
+    than requiring the caller to manage an open_client() context."""
+    async with open_client() as client:
+        await delete_notebook(client, notebook_id)
 
 
 async def add_source(client: Any, notebook_id: str, file_path: Path, *, wait: bool = True) -> Any:
