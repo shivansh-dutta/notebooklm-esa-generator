@@ -169,7 +169,9 @@ async def add_source(client: Any, notebook_id: str, file_path: Path, *, wait: bo
     if not file_path.exists():
         raise NblmError(f"Source file not found: {file_path}")
     try:
-        source = await client.sources.add_file(notebook_id, str(file_path), wait=wait)
+        source = await client.sources.add_file(
+            notebook_id, str(file_path), wait=wait, wait_timeout=600.0
+        )
     except Exception as exc:
         raise NblmError(f"Failed to upload source {file_path.name}: {exc}") from exc
     logger.info("nblm_client: uploaded source %s -> notebook %s", file_path.name, notebook_id)
