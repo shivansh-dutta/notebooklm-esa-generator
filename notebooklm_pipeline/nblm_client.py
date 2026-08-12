@@ -179,7 +179,7 @@ async def add_source(client: Any, notebook_id: str, file_path: Path, *, wait: bo
 
 
 async def ask(
-    client: Any, notebook_id: str, question: str, *, retries: int = 4, retry_delay: float = 5.0
+    client: Any, notebook_id: str, question: str, *, retries: int = 7, retry_delay: float = 10.0
 ) -> AskResult:
     """Ask a question of the notebook and return a normalized AskResult.
 
